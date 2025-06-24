@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -17,6 +18,7 @@ interface Alien {
   position: Position;
   type: number; // 0-2 for different alien types
   alive: boolean;
+  id: number; // Add unique ID for each alien
 }
 
 interface ScoreEntry {
@@ -50,7 +52,7 @@ export default function SpaceInvadersGame() {
   const [aliens, setAliens] = useState<Alien[]>([]);
   const [bullets, setBullets] = useState<Bullet[]>([]);
   const [alienDirection, setAlienDirection] = useState(1); // 1 for right, -1 for left
-  const [alienSpeed, setAlienSpeed] = useState(0.2); // Much slower initial speed
+  const [alienSpeed, setAlienSpeed] = useState(0.1); // Very slow initial speed
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [level, setLevel] = useState(1);
@@ -67,6 +69,11 @@ export default function SpaceInvadersGame() {
   const gameLoopRef = useRef<number | null>(null);
   const lastTimeRef = useRef(0);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const playerPositionRef = useRef<Position>({
+    x: GAME_WIDTH / 2,
+    y: GAME_HEIGHT - 50,
+  });
+  const alienIdCounterRef = useRef(0);
 
   // Load high scores from localStorage
   const loadHighScores = useCallback(() => {
@@ -158,9 +165,11 @@ export default function SpaceInvadersGame() {
           position: { x: col * 60 + 100, y: row * 50 + 50 },
           type: Math.floor(row / 2), // 0, 1, or 2
           alive: true,
+          id: alienIdCounterRef.current + (row * ALIEN_COLS + col),
         });
       }
     }
+    alienIdCounterRef.current += ALIEN_ROWS * ALIEN_COLS;
     setAliens(newAliens);
   }, []);
 
@@ -196,7 +205,7 @@ export default function SpaceInvadersGame() {
     });
   }, []);
 
-  // Move player based on keys pressed
+  // Move player
   const movePlayer = useCallback(() => {
     setPlayerPosition((prev) => {
       let newX = prev.x;
@@ -208,7 +217,9 @@ export default function SpaceInvadersGame() {
         newX = Math.min(GAME_WIDTH - PLAYER_WIDTH, newX + 5);
       }
 
-      return { x: newX, y: prev.y };
+      const newPosition = { x: newX, y: prev.y };
+      playerPositionRef.current = newPosition; // Update ref with current position
+      return newPosition;
     });
   }, [keysPressed]);
 
@@ -218,20 +229,23 @@ export default function SpaceInvadersGame() {
     if (now - lastShot > 300) {
       const newId = bulletIdCounter + 1;
       setBulletIdCounter(newId);
+
+      // Use current player position from ref
+      const currentPlayerPos = playerPositionRef.current;
+      const bulletX = currentPlayerPos.x + PLAYER_WIDTH / 2 - BULLET_WIDTH / 2;
+      const bulletY = currentPlayerPos.y - BULLET_HEIGHT;
+
       setBullets((prev) => [
         ...prev,
         {
-          position: {
-            x: playerPosition.x + PLAYER_WIDTH / 2 - BULLET_WIDTH / 2,
-            y: playerPosition.y,
-          },
+          position: { x: bulletX, y: bulletY },
           isPlayer: true,
           id: newId,
         },
       ]);
       setLastShot(now);
     }
-  }, [playerPosition, lastShot, bulletIdCounter]);
+  }, [lastShot, bulletIdCounter]);
 
   // Fire alien bullet
   const fireAlienBullet = useCallback(() => {
@@ -284,36 +298,53 @@ export default function SpaceInvadersGame() {
       const aliveAliens = prev.filter((alien) => alien.alive);
       if (aliveAliens.length === 0) return prev;
 
-      // Check if any alien would hit the edge
-      let needsDirectionChange = false;
-      for (const alien of aliveAliens) {
-        const nextX = alien.position.x + alienDirection * alienSpeed;
-        if (nextX <= 0 || nextX >= GAME_WIDTH - ALIEN_WIDTH) {
-          needsDirectionChange = true;
-          break;
-        }
+      // Find the leftmost and rightmost aliens
+      let leftmostX = GAME_WIDTH;
+      let rightmostX = 0;
+
+      aliveAliens.forEach((alien) => {
+        leftmostX = Math.min(leftmostX, alien.position.x);
+        rightmostX = Math.max(rightmostX, alien.position.x);
+      });
+
+      // Check if we need to change direction
+      let shouldChangeDirection = false;
+      if (alienDirection > 0 && rightmostX + ALIEN_WIDTH >= GAME_WIDTH - 5) {
+        shouldChangeDirection = true;
+      } else if (alienDirection < 0 && leftmostX <= 5) {
+        shouldChangeDirection = true;
       }
 
-      // Move all aliens first
-      const movedAliens = prev.map((alien) => {
+      // Move aliens
+      const newAliens = prev.map((alien) => {
         if (!alien.alive) return alien;
 
-        const newX = alien.position.x + alienDirection * alienSpeed;
+        let newX = alien.position.x;
+        let newY = alien.position.y;
+
+        if (shouldChangeDirection) {
+          // Drop down when changing direction
+          newY += 5; // Reduced drop distance
+        } else {
+          // Move horizontally
+          newX += alienDirection * alienSpeed;
+        }
+
         return {
           ...alien,
           position: {
             x: Math.max(0, Math.min(GAME_WIDTH - ALIEN_WIDTH, newX)),
-            y: alien.position.y + (needsDirectionChange ? 8 : 0),
+            y: newY,
           },
         };
       });
 
-      // Change direction if needed (after moving)
-      if (needsDirectionChange) {
+      // Change direction if needed
+      if (shouldChangeDirection) {
         setAlienDirection((prev) => -prev);
       }
 
-      return movedAliens;
+      return newAliens;
     });
   }, [alienDirection, alienSpeed]);
 
@@ -386,7 +417,7 @@ export default function SpaceInvadersGame() {
     const aliveAliens = aliens.filter((alien) => alien.alive);
     if (aliveAliens.length === 0) {
       setLevel((prev) => prev + 1);
-      setAlienSpeed((prev) => prev + 0.05); // Much smaller speed increase
+      setAlienSpeed((prev) => prev + 0.02); // Very small speed increase
       setBullets([]);
       initializeAliens();
     }
@@ -459,10 +490,12 @@ export default function SpaceInvadersGame() {
 
   // Reset game
   const resetGame = useCallback(() => {
-    setPlayerPosition({ x: GAME_WIDTH / 2, y: GAME_HEIGHT - 50 });
+    const initialPosition = { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 50 };
+    setPlayerPosition(initialPosition);
+    playerPositionRef.current = initialPosition; // Reset ref
     setBullets([]);
     setAlienDirection(1);
-    setAlienSpeed(0.2);
+    setAlienSpeed(0.1);
     setScore(0);
     setLives(3);
     setLevel(1);
@@ -472,6 +505,7 @@ export default function SpaceInvadersGame() {
     setLastShot(0);
     setAlienLastShot(0);
     setBulletIdCounter(0);
+    alienIdCounterRef.current = 0; // Reset alien ID counter ref
     setKeysPressed(new Set());
     initializeAliens();
     lastTimeRef.current = 0;
@@ -487,21 +521,22 @@ export default function SpaceInvadersGame() {
   const renderAlien = (alien: Alien) => {
     if (!alien.alive) return null;
 
-    const colors = ["bg-green-400", "bg-yellow-400", "bg-red-400"];
+    const colors = ["bg-green-500", "bg-yellow-500", "bg-red-500"];
     const alienColor = colors[alien.type];
 
     return (
       <div
-        key={`${alien.position.x}-${alien.position.y}`}
-        className={`absolute ${alienColor} rounded`}
+        key={alien.id}
+        className={`absolute ${alienColor} rounded-md shadow-lg border-2 border-gray-800`}
         style={{
           left: alien.position.x,
           top: alien.position.y,
           width: ALIEN_WIDTH,
           height: ALIEN_HEIGHT,
+          boxShadow: "0 4px 8px rgba(0, 0, 0, 0.3)",
         }}
       >
-        <div className="w-full h-full flex items-center justify-center text-black font-bold">
+        <div className="w-full h-full flex items-center justify-center text-black font-bold text-lg">
           👾
         </div>
       </div>
@@ -513,13 +548,14 @@ export default function SpaceInvadersGame() {
     <div
       key={bullet.id}
       className={`absolute ${
-        bullet.isPlayer ? "bg-blue-400" : "bg-red-400"
-      } rounded`}
+        bullet.isPlayer ? "bg-blue-500" : "bg-red-500"
+      } rounded-sm shadow-lg`}
       style={{
         left: bullet.position.x,
         top: bullet.position.y,
         width: BULLET_WIDTH,
         height: BULLET_HEIGHT,
+        boxShadow: bullet.isPlayer ? "0 0 8px #3b82f6" : "0 0 8px #ef4444",
       }}
     />
   );
@@ -564,20 +600,21 @@ export default function SpaceInvadersGame() {
         <div className="flex gap-6 items-start">
           {/* Game Board */}
           <div
-            className="relative border-2 border-gray-600 bg-black"
+            className="relative border-2 border-gray-600 bg-gradient-to-b from-black to-gray-900 rounded-lg overflow-hidden"
             style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
           >
             {/* Player Ship */}
             <div
-              className="absolute bg-blue-500 rounded"
+              className="absolute bg-blue-600 rounded-md shadow-lg border-2 border-blue-400"
               style={{
                 left: playerPosition.x,
                 top: playerPosition.y,
                 width: PLAYER_WIDTH,
                 height: PLAYER_HEIGHT,
+                boxShadow: "0 4px 12px rgba(59, 130, 246, 0.5)",
               }}
             >
-              <div className="w-full h-full flex items-center justify-center text-white font-bold">
+              <div className="w-full h-full flex items-center justify-center text-white font-bold text-lg">
                 🚀
               </div>
             </div>
