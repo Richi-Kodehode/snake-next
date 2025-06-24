@@ -15,6 +15,7 @@ interface ScoreEntry {
   date: string;
   timestamp: number;
   mode: GameMode;
+  playerName: string;
 }
 
 const GRID_SIZE = 20;
@@ -38,12 +39,15 @@ export default function SnakeGame() {
   const [gameStarted, setGameStarted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [showScoreboard, setShowScoreboard] = useState(false);
+  const [showNameInput, setShowNameInput] = useState(false);
+  const [playerName, setPlayerName] = useState("");
   const [highScores, setHighScores] = useState<ScoreEntry[]>([]);
   const [currentHighScore, setCurrentHighScore] = useState(0);
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
   const lastDirectionRef = useRef<Direction>(INITIAL_DIRECTION);
   const nextDirectionRef = useRef<Direction>(INITIAL_DIRECTION);
   const inputBufferRef = useRef<Direction[]>([]);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Load high scores from localStorage
   const loadHighScores = useCallback(() => {
@@ -63,13 +67,14 @@ export default function SnakeGame() {
 
   // Save high scores to localStorage
   const saveHighScore = useCallback(
-    (newScore: number) => {
+    (newScore: number, name: string) => {
       try {
         const newEntry: ScoreEntry = {
           score: newScore,
           date: new Date().toLocaleDateString(),
           timestamp: Date.now(),
           mode: gameMode,
+          playerName: name,
         };
 
         const updatedScores = [...highScores, newEntry]
@@ -84,6 +89,41 @@ export default function SnakeGame() {
       }
     },
     [highScores, gameMode]
+  );
+
+  // Handle game over
+  const handleGameOver = useCallback(() => {
+    setGameOver(true);
+    if (score > 0) {
+      setShowNameInput(true);
+      // Focus the input after a short delay to ensure it's rendered
+      setTimeout(() => {
+        nameInputRef.current?.focus();
+      }, 100);
+    }
+  }, [score]);
+
+  // Submit player name
+  const submitName = useCallback(() => {
+    const trimmedName = playerName.trim();
+    if (trimmedName) {
+      saveHighScore(score, trimmedName);
+      setShowNameInput(false);
+      setPlayerName("");
+    }
+  }, [playerName, score, saveHighScore]);
+
+  // Handle name input key press
+  const handleNameKeyPress = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "Enter") {
+        submitName();
+      } else if (event.key === "Escape") {
+        setShowNameInput(false);
+        setPlayerName("");
+      }
+    },
+    [submitName]
   );
 
   // Load high scores on component mount
@@ -181,7 +221,7 @@ export default function SnakeGame() {
       // Handle wall collision based on game mode
       if (gameMode === "CLASSIC") {
         if (!isValidPosition(head)) {
-          setGameOver(true);
+          handleGameOver();
           return currentSnake;
         }
       } else if (gameMode === "WALL_PASS") {
@@ -190,7 +230,7 @@ export default function SnakeGame() {
 
       // Check for self collision
       if (checkCollision(head, newSnake)) {
-        setGameOver(true);
+        handleGameOver();
         return currentSnake;
       }
 
@@ -217,6 +257,7 @@ export default function SnakeGame() {
     checkCollision,
     generateFoodForSnake,
     gameMode,
+    handleGameOver,
   ]);
 
   // Handle keyboard input
@@ -277,11 +318,6 @@ export default function SnakeGame() {
 
   // Reset game
   const resetGame = useCallback(() => {
-    // Save score if game was over and score > 0
-    if (gameOver && score > 0) {
-      saveHighScore(score);
-    }
-
     setSnake(INITIAL_SNAKE);
     setFood(generateFoodForSnake(INITIAL_SNAKE));
     setDirection(INITIAL_DIRECTION);
@@ -292,7 +328,9 @@ export default function SnakeGame() {
     setScore(0);
     setGameStarted(false);
     setPaused(false);
-  }, [gameOver, score, saveHighScore, generateFoodForSnake]);
+    setShowNameInput(false);
+    setPlayerName("");
+  }, [generateFoodForSnake]);
 
   // Change game mode
   const changeGameMode = useCallback(
@@ -494,7 +532,7 @@ export default function SnakeGame() {
 
           {/* Game Over Button */}
           <div className="mt-4 text-center h-12">
-            {gameOver && (
+            {gameOver && !showNameInput && (
               <button
                 onClick={resetGame}
                 className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded transition-colors"
@@ -503,6 +541,60 @@ export default function SnakeGame() {
               </button>
             )}
           </div>
+
+          {/* Name Input Modal */}
+          {showNameInput && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+                <div className="text-center">
+                  <h2 className="text-2xl font-bold text-green-400 mb-4">
+                    New High Score!
+                  </h2>
+                  <p className="text-white mb-4">
+                    Score:{" "}
+                    <span className="text-yellow-400 font-bold">{score}</span>
+                  </p>
+                  <p className="text-gray-300 mb-4">
+                    Enter your name to save your score:
+                  </p>
+
+                  <input
+                    ref={nameInputRef}
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    onKeyDown={handleNameKeyPress}
+                    placeholder="Your name"
+                    maxLength={20}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:border-green-400 mb-4"
+                  />
+
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={submitName}
+                      disabled={!playerName.trim()}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded transition-colors"
+                    >
+                      Save Score
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowNameInput(false);
+                        setPlayerName("");
+                      }}
+                      className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-400 mt-2">
+                    Press Enter to save, Escape to cancel
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Scoreboard Button */}
           <div className="mt-4">
@@ -546,7 +638,10 @@ export default function SnakeGame() {
                         <span className="text-yellow-400 font-bold mr-3">
                           #{index + 1}
                         </span>
-                        <span className="text-white">{entry.score}</span>
+                        <span className="text-white font-medium">
+                          {entry.playerName}
+                        </span>
+                        <span className="text-white ml-2">- {entry.score}</span>
                         <span className="text-gray-400 text-xs ml-2">
                           ({getModeDisplayName(entry.mode)})
                         </span>
