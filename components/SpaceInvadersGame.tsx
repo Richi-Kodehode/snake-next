@@ -50,7 +50,7 @@ export default function SpaceInvadersGame() {
   const [aliens, setAliens] = useState<Alien[]>([]);
   const [bullets, setBullets] = useState<Bullet[]>([]);
   const [alienDirection, setAlienDirection] = useState(1); // 1 for right, -1 for left
-  const [alienSpeed, setAlienSpeed] = useState(0.3); // Much slower initial speed
+  const [alienSpeed, setAlienSpeed] = useState(0.2); // Much slower initial speed
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [level, setLevel] = useState(1);
@@ -202,10 +202,10 @@ export default function SpaceInvadersGame() {
       let newX = prev.x;
 
       if (keysPressed.has("ArrowLeft")) {
-        newX = Math.max(0, newX - 6); // Increased movement speed
+        newX = Math.max(0, newX - 5);
       }
       if (keysPressed.has("ArrowRight")) {
-        newX = Math.min(GAME_WIDTH - PLAYER_WIDTH, newX + 6);
+        newX = Math.min(GAME_WIDTH - PLAYER_WIDTH, newX + 5);
       }
 
       return { x: newX, y: prev.y };
@@ -215,8 +215,7 @@ export default function SpaceInvadersGame() {
   // Fire player bullet
   const firePlayerBullet = useCallback(() => {
     const now = Date.now();
-    if (now - lastShot > 250) {
-      // Slightly faster rate
+    if (now - lastShot > 300) {
       const newId = bulletIdCounter + 1;
       setBulletIdCounter(newId);
       setBullets((prev) => [
@@ -238,7 +237,7 @@ export default function SpaceInvadersGame() {
   const fireAlienBullet = useCallback(() => {
     const now = Date.now();
     const aliveAliens = aliens.filter((alien) => alien.alive);
-    const fireRate = Math.max(3000 - level * 200, 1000); // Slower fire rate, scales with level
+    const fireRate = Math.max(4000 - level * 300, 1500);
 
     if (now - alienLastShot > fireRate && aliveAliens.length > 0) {
       const randomAlien =
@@ -268,7 +267,7 @@ export default function SpaceInvadersGame() {
           ...bullet,
           position: {
             x: bullet.position.x,
-            y: bullet.position.y + (bullet.isPlayer ? -10 : 4), // Slower alien bullets
+            y: bullet.position.y + (bullet.isPlayer ? -8 : 3),
           },
         }))
         .filter(
@@ -285,37 +284,36 @@ export default function SpaceInvadersGame() {
       const aliveAliens = prev.filter((alien) => alien.alive);
       if (aliveAliens.length === 0) return prev;
 
-      let shouldChangeDirection = false;
-      let edgeHit = false;
-
-      // Check if any alien is at the edge
-      aliveAliens.forEach((alien) => {
-        const newX = alien.position.x + alienDirection * alienSpeed;
-        if (newX <= 0 || newX >= GAME_WIDTH - ALIEN_WIDTH) {
-          edgeHit = true;
+      // Check if any alien would hit the edge
+      let needsDirectionChange = false;
+      for (const alien of aliveAliens) {
+        const nextX = alien.position.x + alienDirection * alienSpeed;
+        if (nextX <= 0 || nextX >= GAME_WIDTH - ALIEN_WIDTH) {
+          needsDirectionChange = true;
+          break;
         }
-      });
-
-      if (edgeHit) {
-        shouldChangeDirection = true;
-        setAlienDirection((prev) => -prev);
       }
 
-      const newAliens = prev.map((alien) => {
+      // Move all aliens first
+      const movedAliens = prev.map((alien) => {
         if (!alien.alive) return alien;
 
         const newX = alien.position.x + alienDirection * alienSpeed;
-
         return {
           ...alien,
           position: {
             x: Math.max(0, Math.min(GAME_WIDTH - ALIEN_WIDTH, newX)),
-            y: alien.position.y + (shouldChangeDirection ? 10 : 0), // Reduced drop distance
+            y: alien.position.y + (needsDirectionChange ? 8 : 0),
           },
         };
       });
 
-      return newAliens;
+      // Change direction if needed (after moving)
+      if (needsDirectionChange) {
+        setAlienDirection((prev) => -prev);
+      }
+
+      return movedAliens;
     });
   }, [alienDirection, alienSpeed]);
 
@@ -326,9 +324,10 @@ export default function SpaceInvadersGame() {
       const bulletsToRemove: number[] = [];
       const aliensToKill: number[] = [];
 
-      // Check player bullets vs aliens
+      // Check each bullet
       newBullets.forEach((bullet, bulletIndex) => {
         if (bullet.isPlayer) {
+          // Player bullet vs aliens
           aliens.forEach((alien, alienIndex) => {
             if (
               alien.alive &&
@@ -337,27 +336,32 @@ export default function SpaceInvadersGame() {
               bullet.position.y < alien.position.y + ALIEN_HEIGHT &&
               bullet.position.y + BULLET_HEIGHT > alien.position.y
             ) {
-              // Hit alien
-              aliensToKill.push(alienIndex);
-              bulletsToRemove.push(bulletIndex);
+              // Mark alien for removal and bullet for removal
+              if (!aliensToKill.includes(alienIndex)) {
+                aliensToKill.push(alienIndex);
+              }
+              if (!bulletsToRemove.includes(bulletIndex)) {
+                bulletsToRemove.push(bulletIndex);
+              }
             }
           });
         } else {
-          // Check alien bullets vs player
+          // Alien bullet vs player
           if (
             bullet.position.x < playerPosition.x + PLAYER_WIDTH &&
             bullet.position.x + BULLET_WIDTH > playerPosition.x &&
             bullet.position.y < playerPosition.y + PLAYER_HEIGHT &&
             bullet.position.y + BULLET_HEIGHT > playerPosition.y
           ) {
-            // Hit player
             setLives((prev) => prev - 1);
-            bulletsToRemove.push(bulletIndex);
+            if (!bulletsToRemove.includes(bulletIndex)) {
+              bulletsToRemove.push(bulletIndex);
+            }
           }
         }
       });
 
-      // Remove hit aliens
+      // Process alien kills AFTER checking all bullets
       if (aliensToKill.length > 0) {
         setAliens((prev) =>
           prev.map((alien, index) =>
@@ -365,7 +369,6 @@ export default function SpaceInvadersGame() {
           )
         );
 
-        // Add score for each alien hit
         aliensToKill.forEach((alienIndex) => {
           const alien = aliens[alienIndex];
           const points = [30, 20, 10][alien.type];
@@ -373,6 +376,7 @@ export default function SpaceInvadersGame() {
         });
       }
 
+      // Return bullets with removed ones filtered out
       return newBullets.filter((_, index) => !bulletsToRemove.includes(index));
     });
   }, [aliens, playerPosition]);
@@ -382,18 +386,17 @@ export default function SpaceInvadersGame() {
     const aliveAliens = aliens.filter((alien) => alien.alive);
     if (aliveAliens.length === 0) {
       setLevel((prev) => prev + 1);
-      setAlienSpeed((prev) => prev + 0.1); // Much smaller speed increase
-      setBullets([]); // Clear all bullets
+      setAlienSpeed((prev) => prev + 0.05); // Much smaller speed increase
+      setBullets([]);
       initializeAliens();
     }
   }, [aliens, initializeAliens]);
 
   // Check game over conditions
   const checkGameOver = useCallback(() => {
-    // Check if aliens reached the bottom
     const aliensReachedBottom = aliens.some(
       (alien) =>
-        alien.alive && alien.position.y + ALIEN_HEIGHT >= playerPosition.y - 20
+        alien.alive && alien.position.y + ALIEN_HEIGHT >= playerPosition.y - 30
     );
 
     if (lives <= 0 || aliensReachedBottom) {
@@ -407,7 +410,6 @@ export default function SpaceInvadersGame() {
       if (gameState !== "PLAYING") return;
 
       if (time - lastTimeRef.current > 16) {
-        // ~60 FPS
         movePlayer();
         moveBullets();
         moveAliens();
@@ -460,7 +462,7 @@ export default function SpaceInvadersGame() {
     setPlayerPosition({ x: GAME_WIDTH / 2, y: GAME_HEIGHT - 50 });
     setBullets([]);
     setAlienDirection(1);
-    setAlienSpeed(0.3);
+    setAlienSpeed(0.2);
     setScore(0);
     setLives(3);
     setLevel(1);
@@ -605,7 +607,7 @@ export default function SpaceInvadersGame() {
               <div className="text-sm space-y-1">
                 <p>Aliens Remaining: {aliens.filter((a) => a.alive).length}</p>
                 <p>Alien Speed: {alienSpeed.toFixed(1)}</p>
-                <p>Alien Fire Rate: {Math.max(3000 - level * 200, 1000)}ms</p>
+                <p>Alien Fire Rate: {Math.max(4000 - level * 300, 1500)}ms</p>
               </div>
             </div>
 
